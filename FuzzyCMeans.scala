@@ -17,7 +17,6 @@
 
 package org.apache.spark.mllib.clustering
 
-
 import scala.collection.mutable.ArrayBuffer
 
 import breeze.linalg.{ DenseVector => BDV, Vector => BV, norm => breezeNorm }
@@ -36,13 +35,13 @@ class FuzzyCMeans private (
   private var maxIterations: Int,
   private var epsilon: Double) extends Serializable with Logging {
 
+  def correction: Double = 0.000001  //Correction parameter for euclidean distance computation
+
   /**
    * Constructs a Fuzzy CMeans instance with default parameters: {c: 2, m: 2, maxIterations: 20,
    * runs: 1, epsilon: 1e-4}.
    */
   def this() = this(2, 2, 20, 1e-4)
-
-  val correction = epsilon * epsilon //Correction parameter for euclidean distance computation
 
   /** Set the number of clusters to create (c). Default: 2. */
   def setC(c: Int): this.type = {
@@ -69,7 +68,7 @@ class FuzzyCMeans private (
   def setEpsilon(epsilon: Double): this.type = {
     this.epsilon = epsilon
     this
-  }
+  }  
 
   /**
    * Train a K-means model on the given set of points; `data` should be cached for high
@@ -100,8 +99,7 @@ class FuzzyCMeans private (
 
     val initStartTime = System.nanoTime()
     val sc = data.sparkContext
-    var centroids = initRandomCenters(data)
-    sc.broadcast(centroids)
+    var centroids = initRandomCenters(data)    
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
     logInfo(s"Initialization took " + "%.3f".format(initTimeInSeconds) + " seconds.")
     val dim = data.first().vector.length
@@ -112,6 +110,8 @@ class FuzzyCMeans private (
     // Execute iterations of Fuzzy C Means algorithm 
     while (iteration < maxIterations && !convergence) {
 
+      val broadCenters = sc.broadcast(centroids)
+      
       val totContr = data.mapPartitions { points =>
         val partialNum = Array.fill(c)(BDV.zeros[Double](dim).asInstanceOf[BV[Double]])
         val partialDen = Array.fill[Double](c)(0)
@@ -124,7 +124,7 @@ class FuzzyCMeans private (
         points.foreach { point =>
           var denom = 0.0
           for (j <- 0 until c) {
-            singleDist(j) = (KMeans.fastSquaredDistance(point, centroids(j)) + correction)
+            singleDist(j) = (KMeans.fastSquaredDistance(point, broadCenters.value(j)) + correction)
             numDist(j) = math.pow(singleDist(j), (2 / (m - 1)))
             denom += (1 / numDist(j))
           }
@@ -168,7 +168,7 @@ class FuzzyCMeans private (
       logInfo(s"Fuzzy C Means converged in $iteration iterations.")
     }
 
-    new FuzzyCMeansModel(centroids, data, m)
+    new FuzzyCMeansModel(centroids, m)
   }
 
   /**
@@ -185,7 +185,7 @@ class FuzzyCMeans private (
 }
 
 /**
- * Top-level methods for calling K-means clustering.
+ * Top-level methods for calling Fuzzy C-means clustering.
  */
 object FuzzyCMeans {
 
@@ -208,5 +208,5 @@ object FuzzyCMeans {
       .setEpsilon(epsilon)
       .run(data)
   }
-
+  
 }

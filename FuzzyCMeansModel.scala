@@ -24,7 +24,7 @@ import org.apache.spark.mllib.linalg.{ Vector, Vectors }
 
 
 class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm], 
-    data: RDD[BreezeVectorWithNorm], m: Double) extends Serializable {
+     m: Double) extends Serializable {
 
   /** Total number of clusters. */
   def c: Int = centroids.length
