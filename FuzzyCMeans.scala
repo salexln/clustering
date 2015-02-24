@@ -35,13 +35,23 @@ class FuzzyCMeans private (
   private var maxIterations: Int,
   private var epsilon: Double) extends Serializable with Logging {
 
-  def correction: Double = 0.000001  //Correction parameter for euclidean distance computation
-
   /**
    * Constructs a Fuzzy CMeans instance with default parameters: {c: 2, m: 2, maxIterations: 20,
    * runs: 1, epsilon: 1e-4}.
    */
   def this() = this(2, 2, 20, 1e-4)
+
+  /**
+   * Helper methods already defined in ML lib. Used in FCM to
+   * correct distances equals to 0
+   */
+  private lazy val EPSILON = {
+    var eps = 1.0
+    while ((1.0 + (eps / 2.0)) != 1.0) {
+      eps /= 2.0
+    }
+    eps
+  }
 
   /** Set the number of clusters to create (c). Default: 2. */
   def setC(c: Int): this.type = {
@@ -68,7 +78,7 @@ class FuzzyCMeans private (
   def setEpsilon(epsilon: Double): this.type = {
     this.epsilon = epsilon
     this
-  }  
+  }
 
   /**
    * Train a K-means model on the given set of points; `data` should be cached for high
@@ -99,7 +109,7 @@ class FuzzyCMeans private (
 
     val initStartTime = System.nanoTime()
     val sc = data.sparkContext
-    var centroids = initRandomCenters(data)    
+    var centroids = initRandomCenters(data)
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
     logInfo(s"Initialization took " + "%.3f".format(initTimeInSeconds) + " seconds.")
     val dim = data.first().vector.length
@@ -110,21 +120,19 @@ class FuzzyCMeans private (
     // Execute iterations of Fuzzy C Means algorithm 
     while (iteration < maxIterations && !convergence) {
 
-      val broadCenters = sc.broadcast(centroids)
-      
+      val broadcastCenters = sc.broadcast(centroids)
+      val broadcastCorrection = sc.broadcast(EPSILON)
+
       val totContr = data.mapPartitions { points =>
         val partialNum = Array.fill(c)(BDV.zeros[Double](dim).asInstanceOf[BV[Double]])
         val partialDen = Array.fill[Double](c)(0)
         val singleDist = Array.fill[Double](c)(0)
         val numDist = Array.fill[Double](c)(0)
 
-        var max = 0.0
-        var partialCost = Array.fill[Double](c)(0)
-
         points.foreach { point =>
           var denom = 0.0
           for (j <- 0 until c) {
-            singleDist(j) = (KMeans.fastSquaredDistance(point, broadCenters.value(j)) + correction)
+            singleDist(j) = (KMeans.fastSquaredDistance(point, broadcastCenters.value(j)) + broadcastCorrection.value)
             numDist(j) = math.pow(singleDist(j), (2 / (m - 1)))
             denom += (1 / numDist(j))
           }
@@ -156,6 +164,9 @@ class FuzzyCMeans private (
 
       if (changed) { iteration += 1 }
       else { convergence = true }
+
+      broadcastCenters.destroy(true)
+      broadcastCorrection.destroy(true)
 
     } // end while
 
@@ -208,5 +219,5 @@ object FuzzyCMeans {
       .setEpsilon(epsilon)
       .run(data)
   }
-  
+
 }
