@@ -42,9 +42,10 @@ class FuzzyCMeans private (
   def this() = this(2, 2, 20, 1e-4)
 
   /**
-   * Helper methods already defined in ML lib. Used in FCM to
-   * correct distances equals to 0
-   */
+   * Helper methods for lazy evaluation of a factor EPSILON
+   * to avoid division by zero while computing membership degree
+   * for each datum to each center
+   **/
   private lazy val EPSILON = {
     var eps = 1.0
     while ((1.0 + (eps / 2.0)) != 1.0) {
@@ -132,8 +133,9 @@ class FuzzyCMeans private (
         points.foreach { point =>
           var denom = 0.0
           for (j <- 0 until c) {
-            singleDist(j) = (KMeans.fastSquaredDistance(point, broadcastCenters.value(j)) + broadcastCorrection.value)
-            numDist(j) = math.pow(singleDist(j), (2 / (m - 1)))
+            singleDist(j) = (KMeans.fastSquaredDistance(point, broadcastCenters.value(j)) +
+                broadcastCorrection.value)
+            numDist(j) = math.pow(singleDist(j), (1 / (m - 1)))
             denom += (1 / numDist(j))
           }
           for (j <- 0 until c) {

@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.mllib.clustering
 
 import org.apache.spark.rdd.RDD
@@ -17,9 +34,10 @@ class FSIndex private (private var m: Double)
   def this() = this(2)
 
   /**
-   * Helper methods already defined in ML lib. Used in FCM to
-   * correct distances equals to 0
-   */
+   * Helper methods for lazy evaluation of a factor EPSILON
+   * to avoid division by zero while computing membership degree
+   * for each datum to each center
+   **/
   private lazy val EPSILON = {
     var eps = 1.0
     while ((1.0 + (eps / 2.0)) != 1.0) {
@@ -37,7 +55,8 @@ class FSIndex private (private var m: Double)
   /**
    * Format data for the execution
    */
-  def formatData(data: RDD[Vector], ithCenters: Array[Array[Vector]]): scala.collection.Map[Int, Double] = {
+  def formatData(data: RDD[Vector], ithCenters: Array[Array[Vector]]):
+  scala.collection.Map[Int, Double] = {
     // Compute squared norms and cache them.    
     val normsData = data.map(v => breezeNorm(v.toBreeze, 2.0))
     normsData.persist()
@@ -88,7 +107,7 @@ class FSIndex private (private var m: Double)
       val c = centroids.length //Number of centers at z-th iteration      
       val distances = Array.fill[Double](c)(0)
       for (j <- 0 until c) {
-        distances(j) = (KMeans.fastSquaredDistance(centroids(j), grandMedia) + EPSILON)
+        distances(j) = KMeans.fastSquaredDistance(centroids(j), grandMedia) 
       }
       (i, distances)
     }
@@ -102,24 +121,23 @@ class FSIndex private (private var m: Double)
       val localFS = Array.fill[Double](broadcastExecN.value)(0)
 
       points.foreach { point =>
-        for (i <- 0 until broadcastExecN.value) { // i will be the index that refers to the number of the FCM's execution
+        for (i <- 0 until broadcastExecN.value) { // i will refer to the FCM's exec number
           val centroids = broadcastCenters.value(i).clone() //Centers' vector at z-th iteration
           val c = centroids.length //Number of centers at z-th iteration         
           val singleDist = Array.fill[Double](c)(0)
           val numDist = Array.fill[Double](c)(0)
           var denom = 0.0
 
-          for (j <- 0 until c) {
-            //singleDist(j) = KMeans.fastSquaredDistance(point, broadcastCenters.value(i)(j))
+          for (j <- 0 until c) {            
             singleDist(j) = KMeans.fastSquaredDistance(point, centroids(j))
             if (singleDist(j) == 0) { singleDist(j) += broadcastCorrection.value }
-            numDist(j) = math.pow(singleDist(j), (2 / (m - 1)))
+            numDist(j) = math.pow(singleDist(j), (1 / (m - 1)))
             denom += (1 / numDist(j))
           }
 
           for (j <- 0 until c) {
             val u = math.pow((numDist(j) * denom), -m) //uij^m            
-            localFS(i) += (u * (singleDist(j) - broadcastCentersDist.value(i)._2(j))) // singleDist(j))
+            localFS(i) += (u * (singleDist(j) - broadcastCentersDist.value(i)._2(j))) 
           }
         }
       } //foreach end
@@ -151,7 +169,7 @@ object FSIndex {
    * Trains a Fuzzy C-means model using the given set of parameters.
    *
    * @param data training points stored as `RDD[Array[Double]]`
-   * @param ithCenters Array of Vector Centers. (We will obtain one vector of centers for each FCM execution)
+   * @param ithCenters Array of Vector Centers.
    * @param m fuzzyfication constant
    */
   def compute(
