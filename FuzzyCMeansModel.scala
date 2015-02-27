@@ -43,10 +43,17 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
   }
 
   /**
-   * Retrieve the membership degree for each center
+   * Compute fuzzy sets
    */
   def getU(data: RDD[Vector]) = {
-    val breezeData = formatData(data)
+    //val breezeData = formatData(data)
+    //breezeData.foreach { x => println(x) }
+    val norms = data.map(v => breezeNorm(v.toBreeze, 2.0))
+    norms.persist()
+    val breezeData = data.map(_.toBreeze).zip(norms).map {
+      case (v, norm) =>
+        new BreezeVectorWithNorm(v, norm)
+    }
     //val indexedData = breezeData.zipWithIndex()
     val sc = breezeData.sparkContext
     val dimNumb = data.first().size
@@ -62,7 +69,7 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
       val datums = Array.fill(nPoints)(BDV.zeros[Double](dimNumb).asInstanceOf[BV[Double]])
       var i = 0
 
-      points.foreach { point =>
+      pointsCopy._2.foreach { point =>
         var denom = 0.0
         for (j <- 0 until c) {
           singleDist(j) = (KMeans.fastSquaredDistance(point, broadcastCenters.value(j)) +
@@ -84,29 +91,17 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
        *  that feature
        */
       val outMapper = for (prototN <- 0 until c; elem <- 0 until nPoints; feature <- 0 until dimNumb) yield {
-        var sign = "p"     
-        if (datums(elem)(feature) >= broadcastCenters.value(prototN).vector(feature)) {sign = "p"}
-        else {sign = "n"}
-        ( (prototN, feature, sign), (membershipMatrix(elem)(prototN), datums(elem)(feature)) )
+        var sign = "p"
+        if (datums(elem)(feature) >= broadcastCenters.value(prototN).vector(feature)) { sign = "p" }
+        else { sign = "n" }
+        ((prototN, feature, sign), (membershipMatrix(elem)(prototN), datums(elem)(feature)))
       }
       outMapper.iterator
-    }.filter(f => f._2._1 > treshold )
-    
-    
-      
-      
-      
-    
-    
-    
+    }.filter(f => f._2._1 > treshold)
     
 
-  }
-  
     
-  
-  
-  
+  }
 
   /**
    * Helper methods for lazy evaluation of a factor EPSILON

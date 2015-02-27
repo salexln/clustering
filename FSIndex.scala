@@ -65,9 +65,7 @@ class FSIndex private (private var m: Double)
         new BreezeVectorWithNorm(v, norm)
     }
     //Transform prototypes in BreezeVectorWithNorm    
-    val normCenters = ithCenters.flatMap(_.map(v => breezeNorm(v.toBreeze, 2.0)))
-    println("Norm Centers")
-    normCenters.foreach(println)
+    val normCenters = ithCenters.flatMap(_.map(v => breezeNorm(v.toBreeze, 2.0)))    
     //Compute the Vector's norm
     val norm = ithCenters.map(_.map(v => breezeNorm(v.toBreeze, 2.0)))
     //Associate vector with norm
