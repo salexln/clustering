@@ -22,7 +22,10 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.{ Vector, Vectors }
 import breeze.linalg.{ DenseVector => BDV, Vector => BV, norm => breezeNorm }
 import org.apache.spark.SparkContext._
-import scala.math.Ordered
+import org.apache.spark.broadcast.Broadcast
+
+
+
 
 class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
                        m: Double) extends Serializable {
@@ -58,11 +61,16 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
     }
 
     val sc = breezeData.sparkContext
-    val dimNumb = data.first().size
+    
+    val featuresNumb = data.first().size
     val broadcastCenters = sc.broadcast(centroids)
     val broadcastCorrection = sc.broadcast(EPSILON)
-    val broadcastDim = sc.broadcast(dimNumb)
+    val broadcastDim = sc.broadcast(featuresNumb)
+    val domain = getDomain(breezeData, broadcastDim)
+    val broadDomain = sc.broadcast(domain)
 
+    
+    
     val mapper = breezeData.mapPartitions { points =>
       val pointsCopy = points.duplicate
       val nPoints = pointsCopy._1.length
@@ -135,12 +143,17 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
       au
     }
 
-    val prova = intersections.groupByKey().map { f =>
+    val fuzzySets = intersections.groupByKey().map { f =>
       val points = f._2.toIndexedSeq
-      val c = ((f._1._1, f._1._2), (points.min, broadcastCenters.value(f._1._1).vector(f._1._2), points.max))
+      var min = 0.0
+      var max = 0.0
+      val cmp = broadDomain.value(f._1._2)      
+      if (points.min < cmp._1) {min = cmp._1} else {min = points.min} 
+      if (points.max < cmp._2) {max = points.max} else {max = cmp._2}
+      val c = ((f._1._1, f._1._2), (min, broadcastCenters.value(f._1._1).vector(f._1._2), max))
       c
     }.collectAsMap().toSeq
-    val ordered = prova.sortBy(f => f._1._1).foreach(f => println(f))
+    val ordered = fuzzySets.sortBy(f => f._1._2).foreach(f => println(f))
     //.sortBy(f => f._1._1, true).sortBy(f => f._1._2, true).collectAsMap()
 
     // output.foreach(f=>println(f))
@@ -148,6 +161,8 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
     broadcastCenters.destroy(true)
     broadcastCorrection.destroy(true)
     broadcastDim.destroy(true)
+    broadDomain.destroy(true)
+    
 
   }
 
@@ -162,6 +177,38 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
       eps /= 2.0
     }
     eps
+  }
+  
+  
+    /**
+   * Evaluate features' domain
+   */
+
+  private def getDomain(data: RDD[BreezeVectorWithNorm], broadFeat:  Broadcast[Int]): scala.collection.Map[Int,(Double,Double)] = {
+    
+    
+
+    val domain = data.mapPartitions { points =>
+      val features = broadFeat.value
+      val max = Array.fill[Double](features)(0)
+      val min = Array.fill[Double](features)(Double.MaxValue)
+
+      points.foreach { point =>
+        for (j <- 0 until broadFeat.value) {
+          if (point.vector(j) > max(j)) { max(j) = point.vector(j) }
+          if (point.vector(j) < min(j)) { min(j) = point.vector(j) }          
+        }
+      }
+      
+      val partialDomain = for (j <-0 until broadFeat.value) yield{
+        (j, (min(j),max(j)))
+      }
+      partialDomain.iterator
+    }.reduceByKey((x,y) => (math.min(x._1, y._1), math.max(x._2, y._2)) ).collectAsMap()
+
+    domain.foreach(f => println(f))
+    domain
+    
   }
 
   private def formatData(data: RDD[Vector]): RDD[BreezeVectorWithNorm] = {
