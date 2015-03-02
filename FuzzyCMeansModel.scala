@@ -22,6 +22,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.{ Vector, Vectors }
 import breeze.linalg.{ DenseVector => BDV, Vector => BV, norm => breezeNorm }
 import org.apache.spark.SparkContext._
+import scala.math.Ordered
 
 class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
                        m: Double) extends Serializable {
@@ -64,7 +65,7 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
 
     val mapper = breezeData.mapPartitions { points =>
       val pointsCopy = points.duplicate
-      val nPoints = pointsCopy._1.length      
+      val nPoints = pointsCopy._1.length
       val singleDist = Array.fill[Double](c)(0)
       val numDist = Array.fill[Double](c)(0)
       val membershipMatrix = Array.ofDim[Double](nPoints, c)
@@ -92,11 +93,11 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
        *  var sign will be p (positive) if the datum's feature is greater (above) the cluster's prototype for
        *  that feature otherwise sign will be n (negative)
        */
-      val outMapper = for (prototN <- 0 until c; elem <- 0 until nPoints; feature <- 0 until broadcastDim.value) yield {
+      val outMapper = for (prototN <- 0 until c; row <- 0 until nPoints; feature <- 0 until broadcastDim.value) yield {
         var sign = "p"
-        if (datums(elem)(feature) >= broadcastCenters.value(prototN).vector(feature)) { sign = "p" }
+        if (datums(row)(feature) >= broadcastCenters.value(prototN).vector(feature)) { sign = "p" }
         else { sign = "n" }
-        ((prototN, feature, sign), (datums(elem)(feature), membershipMatrix(elem)(prototN)))
+        ((prototN, feature, sign), (datums(row)(feature), membershipMatrix(row)(prototN)))
       }
       outMapper.iterator
     }.filter(f => f._2._2 > treshold)
@@ -106,8 +107,8 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
      *  Remember that each center belongs to his cluster with degree 1
      */
     val traslatedPoint = mapper.map { f =>
-      val c = ((f._1._1, f._1._2, f._1._3), ( (f._2._1 - broadcastCenters.value(f._1._1).vector(f._1._2)), (f._2._2 - 1)) )
-      c
+      val aux = ((f._1._1, f._1._2, f._1._3), ((f._2._1 - broadcastCenters.value(f._1._1).vector(f._1._2)), (f._2._2 - 1)))
+      aux
     }
 
     /**
@@ -117,37 +118,37 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
      * The linear regression will be computed traslating the points around (x0,y0)
      *  so the regression will fit the model y-y0 = b(x - x0)
      */
-    val bNum = traslatedPoint.map { f =>
-      val c = ((f._1._1, f._1._2, f._1._3), (f._2._1 * f._2._2))
-      c
-    }.reduceByKey((x, y) => x + y)
 
-    val bDen = traslatedPoint.map { f =>
-      val c = ((f._1._1, f._1._2, f._1._3), f._2._1)
-      c
-    }.reduceByKey((x, y) => x + y)
+    val bNumDen = traslatedPoint.map { f =>
+      val aux = ((f._1._1, f._1._2, f._1._3), (f._2._1 * f._2._2, math.pow(f._2._1, 2))) //key, yi*xi,xi^2
+      aux
+    }.reduceByKey((x, y) => (x._1 + y._1, x._2 + y._2))
 
-    val b = bNum.join(bDen).map { f =>
-      val c = ((f._1._1, f._1._2, f._1._3), (f._2._1 / (f._2._2 + broadcastCorrection.value)))
-      c
+    val b = bNumDen.map { f =>
+      val aux = ((f._1._1, f._1._2, f._1._3), (f._2._1 / f._2._2))
+      aux
     }
-    // Rember that the equation is y-y0=b(x-x0) so y=0 => x=(bx0-y0)/b
+    // y-y0=b(x-x0) so y=0 => x=(bx0-y0)/b
     val intersections = b.map { f =>
-      val aux = (( (f._2 * broadcastCenters.value(f._1._1).vector(f._1._2)) - 1) / f._2)
-      val c = ((f._1._1, f._1._2, f._1._3), aux)
-      c
+      val aux = (((f._2 * broadcastCenters.value(f._1._1).vector(f._1._2)) - 1) / f._2)
+      val au = ((f._1._1, f._1._2), aux)
+      au
     }
 
-   // val joinedInters = intersections.join(intersections)
+    val prova = intersections.groupByKey().map { f =>
+      val points = f._2.toIndexedSeq
+      val c = ((f._1._1, f._1._2), (points.min, broadcastCenters.value(f._1._1).vector(f._1._2), points.max))
+      c
+    }.collectAsMap().toSeq
+    val ordered = prova.sortBy(f => f._1._1).foreach(f => println(f))
+    //.sortBy(f => f._1._1, true).sortBy(f => f._1._2, true).collectAsMap()
 
-    //joinedInters.sortBy(f => f._1._1, true).sortBy(f=>f._1._2,true)
-    val output = intersections.collectAsMap().toSeq.sortBy(f => f._1._1).sortBy(f => f._1._2)
-    output.foreach(f=>println(f))
+    // output.foreach(f=>println(f))
 
     broadcastCenters.destroy(true)
     broadcastCorrection.destroy(true)
     broadcastDim.destroy(true)
-    
+
   }
 
   /**

@@ -147,6 +147,8 @@ class FSIndex private (private var m: Double)
       validityIndexLoc.iterator
 
     }.reduceByKey((x, y) => x + y).collectAsMap()
+    
+    val out = indices.toSeq.sortBy(f=> f._2).foreach(f => println(f))
 
     broadcastCenters.destroy(true)
     broadcastCentersDist.destroy(true)
