@@ -37,7 +37,7 @@ class FSIndex private (private var m: Double)
    * Helper methods for lazy evaluation of a factor EPSILON
    * to avoid division by zero while computing membership degree
    * for each datum to each center
-   **/
+   */
   private lazy val EPSILON = {
     var eps = 1.0
     while ((1.0 + (eps / 2.0)) != 1.0) {
@@ -55,8 +55,7 @@ class FSIndex private (private var m: Double)
   /**
    * Format data for the execution
    */
-  def formatData(data: RDD[Vector], ithCenters: Array[Array[Vector]]):
-  scala.collection.Map[Int, Double] = {
+  def formatData(data: RDD[Vector], ithCenters: Array[Array[Vector]]): scala.collection.Map[Int, Double] = {
     // Compute squared norms and cache them.    
     val normsData = data.map(v => breezeNorm(v.toBreeze, 2.0))
     normsData.persist()
@@ -65,7 +64,7 @@ class FSIndex private (private var m: Double)
         new BreezeVectorWithNorm(v, norm)
     }
     //Transform prototypes in BreezeVectorWithNorm    
-    val normCenters = ithCenters.flatMap(_.map(v => breezeNorm(v.toBreeze, 2.0)))    
+    val normCenters = ithCenters.flatMap(_.map(v => breezeNorm(v.toBreeze, 2.0)))
     //Compute the Vector's norm
     val norm = ithCenters.map(_.map(v => breezeNorm(v.toBreeze, 2.0)))
     //Associate vector with norm
@@ -85,6 +84,8 @@ class FSIndex private (private var m: Double)
   }
 
   /**
+   * @param data: the input data set
+   * @param ithCenters: Centers of each FCM execution
    * Compute the Fukuyama-Sugeno index for each FCM execution
    */
 
@@ -105,7 +106,7 @@ class FSIndex private (private var m: Double)
       val c = centroids.length //Number of centers at z-th iteration      
       val distances = Array.fill[Double](c)(0)
       for (j <- 0 until c) {
-        distances(j) = KMeans.fastSquaredDistance(centroids(j), grandMedia) 
+        distances(j) = KMeans.fastSquaredDistance(centroids(j), grandMedia)
       }
       (i, distances)
     }
@@ -126,7 +127,7 @@ class FSIndex private (private var m: Double)
           val numDist = Array.fill[Double](c)(0)
           var denom = 0.0
 
-          for (j <- 0 until c) {            
+          for (j <- 0 until c) {
             singleDist(j) = KMeans.fastSquaredDistance(point, centroids(j))
             if (singleDist(j) == 0) { singleDist(j) += broadcastCorrection.value }
             numDist(j) = math.pow(singleDist(j), (1 / (m - 1)))
@@ -135,10 +136,10 @@ class FSIndex private (private var m: Double)
 
           for (j <- 0 until c) {
             val u = math.pow((numDist(j) * denom), -m) //uij^m            
-            localFS(i) += (u * (singleDist(j) - broadcastCentersDist.value(i)._2(j))) 
+            localFS(i) += (u * (singleDist(j) - broadcastCentersDist.value(i)._2(j)))
           }
         }
-      } //foreach end
+      }
 
       val validityIndexLoc = for (i <- 0 until broadcastExecN.value) yield {
         (i, localFS(i))
@@ -147,8 +148,8 @@ class FSIndex private (private var m: Double)
       validityIndexLoc.iterator
 
     }.reduceByKey((x, y) => x + y).collectAsMap()
-    
-    val out = indices.toSeq.sortBy(f=> f._2).foreach(f => println(f))
+
+    val out = indices.toSeq.sortBy(f => f._2).foreach(f => println(f))
 
     broadcastCenters.destroy(true)
     broadcastCentersDist.destroy(true)

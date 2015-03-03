@@ -45,7 +45,7 @@ class FuzzyCMeans private (
    * Helper methods for lazy evaluation of a factor EPSILON
    * to avoid division by zero while computing membership degree
    * for each datum to each center
-   **/
+   */
   private lazy val EPSILON = {
     var eps = 1.0
     while ((1.0 + (eps / 2.0)) != 1.0) {
@@ -82,6 +82,7 @@ class FuzzyCMeans private (
   }
 
   /**
+   * @param data: the input data set
    * Train a K-means model on the given set of points; `data` should be cached for high
    * performance, because this is an iterative algorithm.
    */
@@ -99,6 +100,7 @@ class FuzzyCMeans private (
   }
 
   /**
+   * @param data: the input data set
    * Train a Fuzzy C-means model on the given set of points; `data` should be cached for high
    * performance, because this is an iterative algorithm.
    */
@@ -134,7 +136,7 @@ class FuzzyCMeans private (
           var denom = 0.0
           for (j <- 0 until c) {
             singleDist(j) = (KMeans.fastSquaredDistance(point, broadcastCenters.value(j)) +
-                broadcastCorrection.value)
+              broadcastCorrection.value)
             numDist(j) = math.pow(singleDist(j), (1 / (m - 1)))
             denom += (1 / numDist(j))
           }
@@ -185,6 +187,7 @@ class FuzzyCMeans private (
   }
 
   /**
+   * @param data: the input data set
    * Collect c random elements from the dataset and create an Array of BreezeVectorWithNorm
    * of c centers
    */
