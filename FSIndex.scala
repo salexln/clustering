@@ -149,7 +149,10 @@ class FSIndex private (private var m: Double)
 
     }.reduceByKey((x, y) => x + y).collectAsMap()
 
-    val out = indices.toSeq.sortBy(f => f._2).foreach(f => println(f))
+    val out = indices.toSeq.sortBy(f => f._2).foreach(f => println(f))    
+    val minIndex = indices.minBy(_._2)._1 + ithCenters(0).length  
+    //+1 per avere l'indice della key nella Map
+    println("Numeri di centri che corrispondono all'indice FS minimo: " + minIndex)
 
     broadcastCenters.destroy(true)
     broadcastCentersDist.destroy(true)

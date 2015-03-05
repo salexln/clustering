@@ -20,9 +20,10 @@ package org.apache.spark.mllib.clustering
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.{ Vector, Vectors }
-import breeze.linalg.{ DenseVector => BDV, Vector => BV, norm => breezeNorm }
+import breeze.linalg.{ DenseVector => BDV, Vector => BV, norm => breezeNorm}
 import org.apache.spark.SparkContext._
 import org.apache.spark.broadcast.Broadcast
+
 
 class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
                        m: Double) extends Serializable {
@@ -55,7 +56,7 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
    * @parama data: input data set
    * Compute fuzzy sets
    */
-  def getFuzzySets(data: RDD[Vector]) = {
+  def getFuzzySets(data: RDD[Vector], output: RDD[Vector]) = {
     val breezeData = formatData(data)
     val sc = breezeData.sparkContext
     val featuresNumb = data.first().size
@@ -151,6 +152,34 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
 
     val ordered = fuzzySets.sortBy(f => f._1._2).sortBy(f => f._1._1).foreach(f => println(f))
 
+    //Extract consequent parameters
+    val activationDegree = mapper.join(b).map { f =>
+      val aux = ((f._1._1, f._1._2), (f._2._2 * (f._2._1._1 - broadcastCenters.value(f._1._1).vector(f._1._2))) + 1)
+      aux
+    } //<(centerIndex,featureIndex),A_center_feature>
+
+    val totDegree = activationDegree.mapPartitions{ tuple =>
+      val localSum = Array.fill[Double](broadcastDim.value)(0)
+      tuple.foreach{ tupla =>
+        localSum(tupla._1._2) += tupla._2        
+      }
+      val localRes = for(j<-0 until broadcastCenters.value.length; i<-0 until broadcastDim.value) yield {
+        ((j,i),localSum(i))
+      }
+      localRes.iterator      
+    }.reduceByKey((x,y) => x + y)
+    
+    val gamma = activationDegree.join(totDegree).map{ f =>
+      val aux = ((f._1._1,f._1._2), f._2._1 / f._2._2)
+      aux      
+    }
+    
+      
+      
+      
+      
+      
+        
     broadcastCenters.destroy(true)
     broadcastCorrection.destroy(true)
     broadcastDim.destroy(true)
