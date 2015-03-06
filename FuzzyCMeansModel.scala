@@ -20,10 +20,12 @@ package org.apache.spark.mllib.clustering
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.{ Vector, Vectors }
-import breeze.linalg.{ DenseVector => BDV, Vector => BV, norm => breezeNorm}
+import breeze.linalg.{ DenseVector => BDV, Vector => BV, norm => breezeNorm, DenseMatrix => BDM }
+import breeze.linalg.pinv
 import org.apache.spark.SparkContext._
 import org.apache.spark.broadcast.Broadcast
-
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+import org.apache.spark.mllib.linalg.distributed.{ CoordinateMatrix, MatrixEntry }
 
 class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
                        m: Double) extends Serializable {
@@ -60,6 +62,7 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
     val breezeData = formatData(data)
     val sc = breezeData.sparkContext
     val featuresNumb = data.first().size
+    val observations = data.count()
     val broadcastCenters = sc.broadcast(centroids)
     val broadcastCorrection = sc.broadcast(EPSILON)
     val broadcastDim = sc.broadcast(featuresNumb)
@@ -158,28 +161,57 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
       aux
     } //<(centerIndex,featureIndex),A_center_feature>
 
-    val totDegree = activationDegree.mapPartitions{ tuple =>
+    val totDegree = activationDegree.mapPartitions { tuple =>
       val localSum = Array.fill[Double](broadcastDim.value)(0)
-      tuple.foreach{ tupla =>
-        localSum(tupla._1._2) += tupla._2        
+      tuple.foreach { tupla =>
+        localSum(tupla._1._2) += tupla._2
       }
-      val localRes = for(j<-0 until broadcastCenters.value.length; i<-0 until broadcastDim.value) yield {
-        ((j,i),localSum(i))
+      val localRes = for (j <- 0 until broadcastCenters.value.length; i <- 0 until broadcastDim.value) yield {
+        ((j, i), localSum(i))
       }
-      localRes.iterator      
-    }.reduceByKey((x,y) => x + y)
-    
-    val gamma = activationDegree.join(totDegree).map{ f =>
-      val aux = ((f._1._1,f._1._2), f._2._1 / f._2._2)
-      aux      
+      localRes.iterator
+    }.reduceByKey((x, y) => x + y)
+
+    val gamma = activationDegree.join(totDegree).map { f =>
+      val aux = ((f._1._1, f._1._2), f._2._1 / f._2._2)
+      aux
     }
-    
-      
-      
-      
-      
-      
-        
+
+    // Foreach center make an array of gamma(x(i)) namely the GAMMA's diagonal
+    val gammaMatrices = Array.ofDim[Double](c, observations.toInt)
+    for (j <- 0 until c) {
+      gammaMatrices(j) = gamma.filter(f => f._1._1 == j).sortBy(f => f._1._2, true).map { f =>
+        (f._2)
+      }.collect
+    }
+    //Add a column of all 1 to the data set matrix
+    val modData = data.map { f =>
+      val out = Array(1.0) ++ f.toArray
+      val c = Vectors.dense(out)
+      c
+    }.zipWithIndex()
+
+    // Transform dataset in  matrix=>((i,j),value) 
+    // where i = row index; j = col index
+    val matrixData = modData.map { f =>
+      val aux = for (dim <- 0 until f._1.size) yield {
+        ((f._2, dim.toLong), f._1(dim))
+      }
+      aux
+    }.flatMap(f => f)
+
+    // Transpost matrix 
+    val matrixDataT = matrixData.map { f =>
+      val aux = ((f._1._2, f._1._1), f._2)
+      aux
+    }
+
+    /*  
+    val matr =BDM((1.3,2.3,3.3),(1.2,4.5,3.4),(4.4,5.4,6.4))
+   val inv = pinv(matr)
+   val matrice: RowMatrix = new RowMatrix(data)
+  */
+
     broadcastCenters.destroy(true)
     broadcastCorrection.destroy(true)
     broadcastDim.destroy(true)
@@ -187,6 +219,8 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
 
   }
 
+
+  
   /**
    * Helper methods for lazy evaluation of a factor EPSILON
    * to avoid division by zero while computing membership degree
@@ -199,7 +233,52 @@ class FuzzyCMeansModel(centroids: Array[BreezeVectorWithNorm],
     }
     eps
   }
-
+  
+  
+    /**
+   * @param matrix Matrix A
+   * @param diag elements which belongs to the diagonal of the matrix B
+   * Compute the product between a Matrix A and diagonal matrix B    
+   */
+  private def diagProd(matrix: RDD[((Long, Long), Double)], diag: Array[Double]): RDD[((Long, Long), Double)] = {
+    val result = matrix.map{ f =>
+      val aux = ((f._1._1,f._1._2), f._2 * diag(f._1._2.toInt)) 
+      aux      
+    }   
+    result
+  }
+  
+  /**
+   * @param matrix The A matrix
+   * @param vector The b vector as array of Double
+   * Compute the product between a matrix A and a vector b
+   */
+  
+  private def matrixVectorProd(matrix: RDD[((Long, Long), Double)], broadVector: Broadcast[Array[Double]]): Array[Double] = {
+    val product = matrix.mapPartitions{ block =>
+      val iterators = block.duplicate
+      val nRow = iterators._1.maxBy(_._1._1)._1._1 + 1    //number of row of the final vector
+      val elements = Array.fill[Double](nRow.toInt)(0)
+      
+      iterators._2.foreach{ value =>
+        elements(value._1._1.toInt) += value._2 * broadVector.value(value._1._2.toInt)        
+      }
+      
+      val partialRes = for(i <-0 until nRow.toInt ) yield {
+        (i,elements(i))
+      }
+      partialRes.iterator
+    }.reduceByKey((x,y) => x + y).map{ f =>
+      val aux = f._2
+      aux
+    }   
+    product.collect()  
+  }
+  
+    
+    
+  
+  
   /**
    * @param data: the input data set
    * @param broadFeat: Number of features' data set
